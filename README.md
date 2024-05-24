@@ -38,7 +38,7 @@ Project organization
 ------------
 
     ├── README.md                                    <- The first level README for the project developers.
-    ├── Àrea de Creació
+    ├── Data Preprocessing and data analysis
     │   ├── dades.zip                                <- Dades intermèdies i finals.
     │   ├── select_subv_creacio.sql                  <- Script per a l'extracció de dades.
     │   ├── subv_creacio.ipynb                       <- Neteja de les dades i creació de les gràfiques.
