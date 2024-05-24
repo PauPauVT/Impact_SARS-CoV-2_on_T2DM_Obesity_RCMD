@@ -11,7 +11,7 @@ To execute the rest of the project it will be necessary to work with some intera
 
 The R packages used have been:
 
-* dplyr)
+* dplyr
 * readxl
 * tidyr
 * kableExtra
@@ -34,10 +34,10 @@ The R packages used have been:
 * randomForest
 * tree
 
-Organització del projecte
+Project organization
 ------------
 
-    ├── README.md                                    <- El README de primer nivell per als desenvolupadors del projecte.
+    ├── README.md                                    <- The first level README for the project developers.
     ├── Àrea de Creació
     │   ├── dades.zip                                <- Dades intermèdies i finals.
     │   ├── select_subv_creacio.sql                  <- Script per a l'extracció de dades.
