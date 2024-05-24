@@ -37,18 +37,12 @@ The R packages used have been:
 Project organization
 ------------
 
-    ├── README.md                                    <- The first level README for the project developers.
+    ├── README.md                                                 <- The first level README for the project developers.
     ├── State of the art
-    │   ├── dades.zip                                <- Dades intermèdies i finals.
-    │   ├── select_subv_creacio.sql                  <- Script per a l'extracció de dades.
-    │   ├── subv_creacio.ipynb                       <- Neteja de les dades i creació de les gràfiques.
-    │   ├── subv_creacio.html                        <- Neteja de les dades i creació de les gràfiques - EXECUTAT (per a la directa visualització).
-    │   └── subv_creacio_grafics.html                <- Visualitzacions finals.
+    │   ├── dois.ods                                              <- 
+    │   ├── dois_title_abstract.rds                               <- 
+    │   └── State_of_the_art.Rmd                                  <- 
     │ 
     └── Data Preprocessing and data analysis           
-        ├── dades.zip                                <- Dades intermèdies i finals.
-        ├── select_subv_lite.sql                     <- Script per a l'extracció de dades.
-        ├── subv_lite.ipynb                          <- Neteja de les dades i creació de les gràfiques.
-        ├── subv_lite.html                           <- Neteja de les dades i creació de les gràfiques - EXECUTAT (per a la directa visualització).
-        └── subv_lite_grafics.html                   <- Visualitzacions finals.
+        └── Data_Preprocessing_and_data_analysis.Rmd              <- 
 
