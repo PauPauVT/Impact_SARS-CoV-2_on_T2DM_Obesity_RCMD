@@ -1,0 +1,1586 @@
+---
+title: "Data Preprocessing and data analysis"
+author: "Pau Vendrell"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+Objective: Define profiles of patients with DM2/Obesity/RCMD according to the evolution of their metabolic control during the COVID-19 pandemic.
+
+```{r}
+# Fixing a seed
+set_seed <- 123
+set.seed(set_seed)
+```
+
+```{r}
+# Loading the necessary libraries
+
+library(dplyr)
+library("readxl")
+library(tidyr)
+library(kableExtra)
+library(compareGroups)
+library(ggplot2)
+library(factoextra)
+library(cluster)
+library(fpc)
+library(mice)
+library(corrplot)
+library(hopkins)
+library(FactoMineR)
+library(vroom)
+library(caret)
+library(scales)
+library(clValid)
+library(nnet)
+library(lmtest)
+library(e1071)
+library(randomForest)
+library(tree)
+```
+
+```{r}
+# Loading the datasets
+# poblacio <- vroom("/home/CovidData/data/EPICOVID_entregable_poblacio_20230922_083540.rds")
+
+cataleg <- as.data.table(readRDS("/home/CovidData/data/EPICOVID_entregable_cataleg_20230922_083540.rds"))
+
+poblacio <- as.data.table(readRDS("/home/CovidData/data/EPICOVID_entregable_poblacio_20230922_083540.rds"))
+
+socioeconomiques <- as.data.table(readRDS("/home/CovidData/data/EPICOVID_entregable_variables_socioeconomiques_20230922_083540.rds"))
+
+geosanitaries <- as.data.table(readRDS("/home/CovidData/data/EPICOVID_entregable_variables_geosanitaries_20230922_083540.rds"))
+
+diagnostics <- as.data.table(readRDS("/home/CovidData/data/EPICOVID_entregable_diagnostics_20230922_083540.rds"))
+
+farmacs_prescrits <- as.data.table(readRDS("/home/CovidData/data/EPICOVID_entregable_farmacs_prescrits_20230922_083540.rds"))
+
+farmacs_facturats <- as.data.table(readRDS("/home/CovidData/data/EPICOVID_entregable_farmacs_facturats_20230922_083540.rds"))
+
+variables_cliniques <- as.data.table(readRDS("/home/CovidData/data/EPICOVID_entregable_variables_cliniques_20230922_083540.rds"))
+
+tabaquisme <- as.data.table(readRDS("/home/CovidData/data/EPICOVID_entregable_tabaquisme_20230922_083540.rds"))
+
+variables_analitiques <- as.data.table(readRDS("/home/CovidData/data/EPICOVID_entregable_variables_analitiques_20230922_083540.rds"))
+
+cmbdh_diagnostics <- as.data.table(readRDS("/home/CovidData/data/EPICOVID_entregable_cmbdh_diagnostics_20230922_083540.rds"))
+
+cmbdh_procediments <- as.data.table(readRDS("/home/CovidData/data/EPICOVID_entregable_cmbdh_procediments_20230922_083540.rds"))
+
+derivacions <- as.data.table(readRDS("/home/CovidData/data/EPICOVID_entregable_derivacions_20230922_083540.rds"))
+
+vacunacions <- as.data.table(readRDS("/home/CovidData/data/EPICOVID_entregable_vacunacions_20230922_083540.rds"))
+
+covid_formulari_seguiment <- as.data.table(
+  readRDS("/home/CovidData/data/EPICOVID_entregable_covid_formulari_seguiment_20230922_083540.rds"))
+
+covid_test <- as.data.table(readRDS("/home/CovidData/data/EPICOVID_entregable_covid_tests_20230922_083540.rds"))
+```
+
+```{r}
+
+#### PREPROCESSING ####
+
+# socioeconomiques
+socioeconomiques[socioeconomiques$ruralitat=="","ruralitat"] <- NA
+socioeconomiques[socioeconomiques$qmedea=="","qmedea"] <- NA
+socioeconomiques[socioeconomiques$ruralitat2011=="","ruralitat2011"] <- NA
+
+# diagnostics
+diagnostics <- diagnostics[!duplicated(diagnostics[,c("idp", "cod", "dat", "agr")]),]
+
+# farmacs_prescrits
+farmacs_prescrits <- farmacs_prescrits[!duplicated(farmacs_prescrits[,c("idp", "dat" ,"cod", "agr")]),]
+
+# farmacs_facturats
+farmacs_facturats <- farmacs_facturats[!duplicated(farmacs_facturats[,c("idp", "dat" ,"cod", "agr")]),]
+farmacs_facturats[,"dat"] <- farmacs_facturats[,"dat"] * 100 + 15  # he posat a dia 15 de mes (meitat del mes)
+
+# cmbd_diagnostics
+cmbdh_diagnostics[cmbdh_diagnostics$cingres!=1 && cmbdh_diagnostics$cingres!=2,"cingres"] <- 0
+cmbdh_diagnostics[cmbdh_diagnostics$calta %in% c(0,9, NA),"calta"] <- 0
+cmbdh_diagnostics[cmbdh_diagnostics$uci=="","uci"] <- NA
+cmbdh_diagnostics <- cmbdh_diagnostics[!duplicated(cmbdh_diagnostics[,c("idp", "cod", "dat", "agr")]),]
+cmbdh_diagnostics <- cmbdh_diagnostics %>% rename(dbaixa = dalta)
+
+# cmbdh_procediments
+cmbdh_procediments[cmbdh_procediments$cingres!=1 && cmbdh_procediments$cingres!=2,"cingres"] <- 0
+cmbdh_procediments[cmbdh_procediments$calta %in% c(0,9, NA),"calta"] <- 0
+cmbdh_procediments[cmbdh_procediments$uci=="","uci"] <- NA
+cmbdh_procediments <- cmbdh_procediments[!duplicated(cmbdh_procediments[,c("idp", "cod", "dat", "agr")]),]
+cmbdh_procediments <- cmbdh_procediments %>% rename(dbaixa = dalta)
+
+# variables_analitiques
+variables_analitiques <- variables_analitiques[!duplicated(variables_analitiques[,c("idp", "dat", "cod", "agr", "val")]),]
+
+# derivacions
+derivacions$cod <- as.character(derivacions$cod)
+
+```
+
+
+# Construccó de les taules planes
+
+Taula d'invariants
+
+```{r}
+invariables <- merge(merge(poblacio, socioeconomiques[,c("idp", "ruralitat", "qmedea")], by = "idp"), geosanitaries, by = "idp")
+
+rm(poblacio, socioeconomiques, geosanitaries)
+head(invariables)
+```
+
+Taula d'històric
+
+```{r}
+# Delete inecessary dataframes
+rm(covid_formulari_seguiment,
+   tabaquisme,
+   farmacs_facturats,
+   farmacs_prescrits,
+   derivacions,
+   cataleg)
+# load the excel with the groupers
+agrupadors <- read_excel("excel_codis_i_variables.xlsx", sheet = "Copia_Cataleg")
+# delete inecessary registers
+variables_analitiques <- variables_analitiques[(variables_analitiques$cod %in% 
+                                                  (agrupadors %>% filter(agr2=="ECRM"))$Codi) |
+                        (variables_analitiques$cod %in% (agrupadors %>% filter(agr2=="DM2"))$Codi) |
+                        (grepl("^A10", variables_analitiques$cod)) |
+                        (variables_analitiques$cod %in% 
+                           (agrupadors %>% filter(agr2=="OBES"))$Codi) |
+                        variables_analitiques$agr %in% c("COVID", "COVID19", 
+                                                         "PAS", "PAD", "cT", "cHDL", "cLDL", 
+                                                         "TG", "IMC", "CAC", "FG") |
+                        variables_analitiques$cod=="HBA1C",]
+
+variables_cliniques <- variables_cliniques[(variables_cliniques$cod %in% 
+                                                  (agrupadors %>% filter(agr2=="ECRM"))$Codi) |
+                        (variables_cliniques$cod %in% (agrupadors %>% filter(agr2=="DM2"))$Codi) |
+                        (grepl("^A10", variables_cliniques$cod)) |
+                        (variables_cliniques$cod %in% 
+                           (agrupadors %>% filter(agr2=="OBES"))$Codi) |
+                        variables_cliniques$agr %in% c("COVID", "COVID19", 
+                                                         "PAS", "PAD", "cT", "cHDL", "cLDL", 
+                                                         "TG", "IMC", "CAC", "FG") |
+                        variables_cliniques$cod=="HBA1C",]
+# generate historic dataframe
+historic <- variables_analitiques
+rm(variables_analitiques)
+
+historic <- bind_rows(historic, 
+                      variables_cliniques)
+rm(variables_cliniques)
+
+historic <- bind_rows(historic, 
+                      covid_test)
+rm(covid_test)
+
+historic <- bind_rows(historic,
+                      (diagnostics %>% mutate(procedencia="diagnostics")))
+rm(diagnostics)
+
+historic <- bind_rows(historic,
+                      (cmbdh_diagnostics %>% mutate(procedencia="hospital")))
+rm(cmbdh_diagnostics)
+
+historic <- bind_rows(historic,
+                      cmbdh_procediments)
+rm(cmbdh_procediments)
+
+vars_incloses <- names(historic)[!(names(historic) %in%
+  c("rimap","ics","ap","origen","risc_anes","t_anes", "origen","risc_anes","t_anes",
+    "val_txt", "tipus", "dx_pos", "id_ingres", "cingres", "calta", "codificacio", "px_pos"))]
+
+historic <- historic[,vars_incloses, with = FALSE]
+
+rm(vars_incloses)
+
+# treiem registres de després de defunció
+historic <- historic %>%
+  left_join(invariables[,c("idp", "sortida")], by = "idp") %>%
+  filter(dat <= sortida) %>%
+  dplyr::select(-sortida)
+
+# treient registres de covid anteriors a 01/02/2020 !!!
+historic <- anti_join(historic, historic %>% 
+                        filter((agr=="COVID" | agr=="COVID19" | resultat=="Positiu") & 
+                                 dat < 20200201))
+
+# delete registres which values of the "codigo"/"agrupadores" are incompatible with life
+
+historic <- anti_join(historic, historic %>% filter(val<0))  # delete the negative values
+historic <- anti_join(historic, historic %>% filter(val==99999))  # delete the value 99999
+
+# specific filtering
+
+historic <- anti_join(historic, historic %>% filter(agr=="IMC" & (val<15 | val>70))) # IMC
+historic <- anti_join(historic, historic %>% filter(agr=="PAS" & (val<60 | val>250))) # PAS
+historic <- anti_join(historic, historic %>% filter(agr=="PAD" & (val<40 | val>150))) # PAD
+historic <- anti_join(historic, historic %>% filter(agr=="cT" & (val<20 | val>1000))) # cT
+historic <- anti_join(historic, historic %>% filter(agr=="cHDL" & (val<10 | val>200))) # cHDL
+historic <- anti_join(historic, historic %>% filter(agr=="cLDL" & (val<20 | val>1000))) # cLDL
+historic <- anti_join(historic, historic %>% filter(agr=="TG" & (val<50 | val>1500))) # TG
+historic <- anti_join(historic, historic %>% filter(agr=="CAC" & (val<0 | val>2000))) # CAC
+historic <- anti_join(historic, historic %>% filter(agr=="FG" & (val<5 | val>150))) # FG
+historic <- anti_join(historic, historic %>% filter(cod=="HBA1C" & (val<2 | val>25))) # HBA1C
+
+head(historic)
+```
+
+historic despés del preprocessat
+
+```{r}
+######## GENERACIÓ DE NOUS REGISTRES I NOVES VARIABLES COVID, ECRM, DM2 i OBESITAT #########
+
+##### PER historic 
+
+# NOUS REGISTRES i NOVES VARIABLES
+
+# Afegim registres de defuncio, trasllat i últim registre dels actius i creem variables de defunció i trasllat
+
+historic$defuncio <- 0
+historic$trasllat <- 0
+
+historic <- historic %>%
+  bind_rows(data.frame(idp = (invariables %>% filter(situacio=="D"))$idp,
+                       dat = (invariables %>% filter(situacio=="D"))$sortida, 
+                       defuncio = rep(1,nrow(invariables[invariables$situacio=="D",])),
+                       trasllat = rep(0,nrow(invariables[invariables$situacio=="D",]))))
+historic <- historic %>%
+  bind_rows(data.frame(idp = (invariables %>% filter(situacio=="T"))$idp,
+                       dat = (invariables %>% filter(situacio=="T"))$sortida, 
+                       defuncio = rep(0,nrow(invariables[invariables$situacio=="T",])),
+                       trasllat = rep(1,nrow(invariables[invariables$situacio=="T",]))))
+
+# variable obesitat i registres de dbaixa
+historic$obesitat <- 0
+historic$covid <- 0
+
+# Inici estat d'obesitat
+historic[(historic$agr=="IMC" & historic$val>30) |
+           (historic$cod %in% (agrupadors %>% filter(agr2=="OBES"))$Codi),
+         "obesitat"] <- 1
+
+historic[historic$agr=="COVID" | 
+           historic$agr=="COVID19" | 
+           historic$resultat=="Positiu","covid"] <- 1
+
+# Afegint registres de dbaixa d'obesitat
+historic <- historic %>%
+  bind_rows(
+    data.frame(
+      idp = (historic%>%filter((cod %in% (agrupadors %>% filter(agr2=="OBES"))$Codi) & !is.na(dbaixa)))$idp,
+      dat = (historic%>%filter((cod %in% (agrupadors %>% filter(agr2=="OBES"))$Codi) & !is.na(dbaixa)))$dbaixa, 
+      defuncio = rep(0,nrow(historic[(cod %in% (agrupadors %>% filter(agr2=="OBES"))$Codi) & !is.na(dbaixa),])),
+      trasllat = rep(0,nrow(historic[(cod %in% (agrupadors %>% filter(agr2=="OBES"))$Codi) & !is.na(dbaixa),])),
+      covid = rep(0,nrow(historic[(cod %in% (agrupadors %>% filter(agr2=="OBES"))$Codi) & !is.na(dbaixa),])),
+      obesitat = rep(0,nrow(historic[(cod %in% (agrupadors %>% filter(agr2=="OBES"))$Codi) & !is.na(dbaixa),]))
+      )
+    )
+
+# Afegint registres de 3 mesos despres de dbaixa de les hospitalitzacions de covid i de despres de 3 mesos del covid
+dat3mesos <- function(dat) {
+  dat <- dat + 300
+  dat[round(dat/100)%%100>12] <- dat[round(dat/100)%%100>12] - 1200 + 10000
+  return(dat)
+}
+
+historic <- historic %>% # registres dels 3 mesos despres de diagnostic
+  bind_rows(
+    data.frame(
+      idp = (historic %>% filter(covid==1))$idp,
+      dat = dat3mesos((historic %>% filter(covid==1))$dat),
+      defuncio = rep(0,length((historic %>% filter(covid==1))$idp)),
+      trasllat = rep(0,length((historic %>% filter(covid==1))$idp)),
+      covid = rep(0,length((historic %>% filter(covid==1))$idp)),
+      obesitat = rep(0,length((historic %>% filter(covid==1))$idp))
+      )
+    )
+historic <- historic %>% # registres dels 3 mesos de dbaixa
+  bind_rows(
+    data.frame(
+      idp = (historic %>% filter((agr=="COVID" | agr=="COVID19") & procedencia=="hospital" & !is.na(dbaixa)))$idp,
+      dat = dat3mesos((historic %>% filter((agr=="COVID" | agr=="COVID19") & procedencia=="hospital" & !is.na(dbaixa)))$dbaixa),
+      defuncio = rep(0,nrow((historic %>% filter((agr=="COVID" | agr=="COVID19") & procedencia=="hospital" & !is.na(dbaixa))))),
+      trasllat = rep(0,nrow((historic %>% filter((agr=="COVID" | agr=="COVID19") & procedencia=="hospital" & !is.na(dbaixa))))),
+      covid = rep(0,nrow((historic %>% filter((agr=="COVID" | agr=="COVID19") & procedencia=="hospital" & !is.na(dbaixa))))),
+      obesitat = rep(0,nrow((historic %>% filter((agr=="COVID" | agr=="COVID19") & procedencia=="hospital" & !is.na(dbaixa)))))
+      )
+    )
+# treiem possibles duplicats que s'hagin creat
+
+historic <- historic %>%
+  filter(!duplicated(historic))
+```
+
+```{r}
+# NOVES VARIABLES
+
+# Inici obesitat: fet anteriorment
+
+# posant que te obesitat fins a dbaixa
+# tractem primer els quins estan detectats a partir de codi de diagnostic
+aux_1 <- distinct(historic %>%
+  filter(historic$cod %in% (agrupadors %>% filter(agr2=="OBES"))$Codi) %>%
+  dplyr::select(idp, dat, dbaixa) %>%
+  mutate(dbaixa = coalesce(dbaixa, 20221231)))
+
+historic <- (historic %>%
+               filter(!(historic$idp %in% aux_1$idp))
+             ) %>%
+  bind_rows(
+    historic %>%
+      filter(historic$idp %in% aux_1$idp)%>%
+      full_join(aux_1, by = "idp") %>%
+      mutate(obesitat = if_else(dat.x >= dat.y & dat.x <= dbaixa.y, 1, obesitat)) %>%
+      dplyr::select(-dat.y, -dbaixa.y) %>% 
+      rename(dat = dat.x, dbaixa = dbaixa.x) %>%
+      group_by_at(vars(-obesitat)) %>% 
+      summarize(obesitat = max(obesitat))
+  )
+rm(aux_1)
+
+
+gc()
+
+# tractem ara els quins han estat detectats per IMC
+aux_1 <- historic %>% 
+  filter(historic$agr=="IMC" & historic$val>30)%>%
+  dplyr::select(idp, dat)
+aux_2 <- historic %>%
+  filter((idp %in% aux_1$idp) & historic$agr=="IMC" & historic$val<=30) %>%
+  dplyr::select(idp, dat)
+aux_1 <- aux_1 %>%
+  full_join(aux_2, by = "idp") %>%
+  mutate(dbaixa = if_else(dat.x<dat.y,dat.y,NA)) %>%
+  dplyr::select(idp, dat.x, dbaixa) %>%
+  rename(dat = dat.x) %>%
+  mutate(dbaixa = coalesce(dbaixa, 0)) %>%
+  group_by_at(vars(-dbaixa)) %>%
+  summarize(dbaixa = max(dbaixa)) %>%  # omplim la data final
+  mutate(dbaixa = if_else(dbaixa==0, 20221231, dbaixa))
+
+gc()
+
+historic <- (historic %>%
+               filter(!(historic$idp %in% aux_1$idp))
+             ) %>%
+  bind_rows(
+    historic %>%
+      filter(historic$idp %in% aux_1$idp)%>%
+      full_join(aux_1, by = "idp") %>%
+      mutate(obesitat = if_else(dat.x >= dat.y & dat.x <= dbaixa.y, 1, obesitat)) %>%
+      dplyr::select(-dat.y, -dbaixa.y) %>% 
+      rename(dat = dat.x, dbaixa = dbaixa.x) %>%
+      group_by_at(vars(-obesitat)) %>% 
+      summarize(obesitat = max(obesitat))
+  )
+rm(aux_1, aux_2)
+
+
+gc()
+
+
+# Inici RCMD
+historic$ecrm <- 0
+historic[(historic$cod %in% (agrupadors %>% filter(agr2=="ECRM"))$Codi),
+         "ecrm"] <- 1
+# posant que te ECRM fins al final
+aux <- historic[historic$ecrm==1,c("idp", "dat")] %>% 
+  group_by(idp) %>% 
+  summarize(dat = min(dat))
+historic <- historic %>%
+  left_join(aux, by = "idp") %>%
+  mutate(ecrm = if_else(!is.na(dat.y) & dat.x >= dat.y, 1, ecrm)) %>%
+  dplyr::select(-dat.y) %>%  
+  rename(dat = dat.x)
+rm(aux)
+
+
+gc()
+
+
+# Inici diabetes
+historic$dm2 <- 0
+historic[(historic$cod %in% (agrupadors %>% filter(agr2=="DM2"))$Codi) |
+           (historic$cod=="HBA1C" & historic$val>=6.5) |
+           (grepl("^A10", historic$cod)),
+         "dm2"] <- 1
+# posant que té diabetis fins al final
+aux <- historic[historic$dm2==1,c("idp", "dat")] %>% 
+  group_by(idp) %>% 
+  summarize(dat = min(dat))
+historic <- historic %>%
+  left_join(aux, by = "idp") %>%
+  mutate(dm2 = if_else(!is.na(dat.y) & dat.x >= dat.y, 1, dm2)) %>%
+  dplyr::select(-dat.y) %>%  
+  rename(dat = dat.x)
+rm(aux)
+
+
+gc()
+
+# afegint 1's pels de 3 mesos despres de covid 
+llista_covid <- unique((historic %>% filter(covid==1))$idp)
+contador <- 0
+historic <- (historic %>%
+                     filter(!(idp %in% llista_covid))) %>% 
+  bind_rows(
+    plyr::ldply(llista_covid, function(i) {
+      aux <- historic %>%
+        filter(idp==i) %>%
+        mutate(covid2 = 0) %>%
+        arrange(dat)
+      for (j in aux$dat) {
+        if (aux[aux$dat==j, "covid"] == 1 & aux[aux$dat==j, "covid2"] == 0) {
+          aux[aux$dat>=j & aux$dat<=dat3mesos(j),"covid2"] <- 1
+          }
+      }
+      contador <<- contador + 1
+      if(contador%%1000==0){print(contador)}
+      return(aux %>%
+               dplyr::select(-covid) %>%
+               rename(covid = covid2))
+      })
+  )
+rm(llista_covid, aux, contador)
+
+gc()
+
+
+# afegint 1's pels de 3 mesos despres de sortir de l'hospital per covid
+aux_1 <- distinct(historic %>%
+  filter((agr=="COVID" | agr=="COVID19"|resultat=="Positiu") & procedencia=="hospital") %>%
+  dplyr::select(idp, dat, dbaixa) %>%
+  mutate(dbaixa = coalesce(dbaixa, 20221231)))
+
+historic <- (historic %>%
+               filter(!(historic$idp %in% aux_1$idp))
+             ) %>%
+  bind_rows(
+    historic %>%
+      filter(historic$idp %in% aux_1$idp)%>%
+      full_join(aux_1, by = "idp") %>%
+      mutate(covid = if_else(dat.x >= dat.y & dat.x <= dat3mesos(dbaixa.y), 1, covid)) %>%
+      dplyr::select(-dat.y, -dbaixa.y) %>% 
+      rename(dat = dat.x, dbaixa = dbaixa.x) %>%
+      group_by_at(vars(-covid)) %>% 
+      summarize(covid = max(covid))
+  )
+rm(aux_1)
+
+gc()
+
+rm(agrupadors)
+head(historic)
+```
+
+```{r}
+######## EVOLUCIÓ DEL CONTROL METABÒLIC #########
+
+# anem a definir els intervals en que els pacients dm2, ecrm i obesos que han tingut covid no van tenir covid
+llista_covid_dm2 <- unique((historic %>% 
+                          filter(covid==1 & dm2==1))$idp)
+llista_covid_ecrm <- unique((historic %>% 
+                          filter(covid==1 & ecrm==1))$idp)
+llista_covid_obesitat <- unique((historic %>% 
+                          filter(covid==1 & obesitat==1))$idp)
+contador <- 0
+episodis_covid_dm2 <- plyr::ldply(llista_covid_dm2, function(k) {
+  aux <- historic %>%
+        filter(idp==k) %>%
+        arrange(dat)
+  
+  contador <<- contador + 1
+  if(contador%%1000==0){print(contador)}
+  
+  new_df_0 <- data.frame(idp = k,
+                         inici = aux$dat[which(diff(c(0,aux$covid))==1)], 
+                         final = aux$dat[which(diff(c(aux$covid,0))==-1)]) %>%
+    mutate(num_episodis_covid = row_number())
+  return(new_df_0)
+})
+
+contador <- 0
+episodis_covid_ecrm <- plyr::ldply(llista_covid_ecrm, function(k) {
+  aux <- historic %>%
+        filter(idp==k) %>%
+        arrange(dat)
+  
+  contador <<- contador + 1
+  if(contador%%1000==0){print(contador)}
+  
+  new_df_0 <- data.frame(idp = k,
+                         inici = aux$dat[which(diff(c(0,aux$covid))==1)], 
+                         final = aux$dat[which(diff(c(aux$covid,0))==-1)]) %>%
+    mutate(num_episodis_covid = row_number())
+  return(new_df_0)
+})
+
+contador <- 0
+episodis_covid_obesitat <- plyr::ldply(llista_covid_obesitat, function(k) {
+  aux <- historic %>%
+        filter(idp==k) %>%
+        arrange(dat)
+  
+  contador <<- contador + 1
+  if(contador%%1000==0){print(contador)}
+  
+  new_df_0 <- data.frame(idp = k,
+                         inici = aux$dat[which(diff(c(0,aux$covid))==1)], 
+                         final = aux$dat[which(diff(c(aux$covid,0))==-1)]) %>%
+    mutate(num_episodis_covid = row_number())
+  return(new_df_0)
+})
+
+rm(llista_covid_dm2, llista_covid_ecrm, llista_covid_obesitat,
+   aux, new_df_0, contador)
+
+```
+
+```{r}
+dat6M_abans <- function(dat) {
+  nuevo_anio <- as.numeric(substr(dat, 1, 4))
+  nuevo_mes <- as.numeric(substr(dat, 5, 6))
+  nuevo_dia <- as.numeric(substr(dat, 7, 8))
+
+  nuevo_anio <- nuevo_anio - ifelse(nuevo_mes <= 6, 1, 0)
+  nuevo_mes <- (nuevo_mes - 6 + 12) %% 12
+  
+  nuevo_mes <- ifelse(nuevo_mes == 0, 12, nuevo_mes)
+
+  return(nuevo_anio * 10000 + nuevo_mes * 100 + nuevo_dia)
+}
+
+## Agrupadors/Codis que identifiquen els paràmetres d'evolució del control metabòlic
+# Presio arterial (agr): PAS, PAD
+# Lipids (agr): cT, cHDL, cLDL, TG
+# IMC (agr): IMC
+# Funcio Renal (agr): CAC, FG
+# HBA1C (cod): HBA1C
+
+# Taula d'evolució pels pacients dm2 de covid
+evolucio_dm2 <- historic %>%
+  full_join(episodis_covid_dm2, by = "idp") %>%
+  filter(agr %in% c("PAS", "PAD", "cT", "cHDL", "cLDL", "TG", "IMC", "CAC", "FG") &
+           !is.na(inici) &
+           dat6M_abans(inici)<=dat & dat<=inici) %>%
+  dplyr::select(idp, agr, dat, val, inici, final, num_episodis_covid) %>%
+  group_by_at(vars(-val, -dat)) %>%
+  slice_max(order_by = dat) %>%
+  rename(val_inicial = val, dat_inicial = dat) %>% 
+  full_join(historic, by = c("idp", "agr")) %>%
+  filter(!is.na(final)) %>%
+  filter(agr %in% c("PAS", "PAD", "cT", "cHDL", "cLDL", "TG", "IMC", "CAC", "FG") &
+           final<=dat & dat<=dat3mesos(final)) %>%
+  dplyr::select(idp, agr, val_inicial, dat_inicial, val, dat, inici, final, num_episodis_covid) %>%
+  group_by_at(vars(-val, -dat)) %>%
+  slice_min(order_by = dat) %>%
+  rename(val_final = val, dat_final = dat)
+aux_dm2 <- historic %>%
+  full_join(episodis_covid_dm2, by = "idp") %>%
+  filter(cod=="HBA1C" &
+           !is.na(inici) &
+           dat6M_abans(inici)<=dat & dat<=inici) %>%
+  dplyr::select(idp, cod, dat, val, inici, final, num_episodis_covid) %>%
+  group_by_at(vars(-val, -dat)) %>%
+  slice_max(order_by = dat) %>%
+  rename(val_inicial = val, dat_inicial = dat) %>%
+  full_join(historic, by = c("idp", "cod")) %>%
+  filter(!is.na(final)) %>%
+  filter(cod=="HBA1C" &
+           final<=dat3mesos(dat) & dat<=dat3mesos(dat3mesos(final))) %>%
+  dplyr::select(idp, cod, val_inicial, dat_inicial, val, dat, inici, final, num_episodis_covid) %>%
+  group_by_at(vars(-val, -dat)) %>%
+  slice_min(order_by = dat) %>%
+  rename(val_final = val, dat_final = dat) %>%
+  rename(agr = cod)
+
+evolucio_dm2 <- rbind(aux_dm2,evolucio_dm2) %>%
+  group_by(idp, agr, num_episodis_covid) %>%  # per treure duplicats
+  slice_max(val_inicial) %>%
+  slice_max(val_final)
+rm(aux_dm2)
+
+gc()
+
+# Taula d'evolució pels pacients ecrm de covid
+evolucio_ecrm <- historic %>%
+  full_join(episodis_covid_ecrm, by = "idp") %>%
+  filter(agr %in% c("PAS", "PAD", "cT", "cHDL", "cLDL", "TG", "IMC", "CAC", "FG") &
+           !is.na(inici) &
+           dat6M_abans(inici)<=dat & dat<=inici) %>%
+  dplyr::select(idp, agr, dat, val, inici, final, num_episodis_covid) %>%
+  group_by_at(vars(-val, -dat)) %>%
+  slice_max(order_by = dat) %>%
+  rename(val_inicial = val, dat_inicial = dat) %>%
+  full_join(historic, by = c("idp", "agr")) %>%
+  filter(!is.na(final)) %>%
+  filter(agr %in% c("PAS", "PAD", "cT", "cHDL", "cLDL", "TG", "IMC", "CAC", "FG") &
+           final<=dat & dat<=dat3mesos(final)) %>%
+  dplyr::select(idp, agr, val_inicial, dat_inicial, val, dat, inici, final, num_episodis_covid) %>%
+  group_by_at(vars(-val, -dat)) %>%
+  slice_min(order_by = dat) %>%
+  rename(val_final = val, dat_final = dat) %>%
+  group_by(idp, agr, num_episodis_covid) %>%  # per treure duplicats
+  slice_max(val_inicial) %>%
+  slice_max(val_final)
+
+gc()
+
+# Taula d'evolució pels pacients obesitat de covid
+evolucio_obesitat <- historic %>%
+  full_join(episodis_covid_obesitat, by = "idp") %>%
+  filter(agr %in% c("PAS", "PAD", "cT", "cHDL", "cLDL", "TG", "IMC", "CAC", "FG") &
+           !is.na(inici) &
+           dat6M_abans(inici)<=dat & dat<=inici) %>%
+  dplyr::select(idp, agr, dat, val, inici, final, num_episodis_covid) %>%
+  group_by_at(vars(-val, -dat)) %>%
+  slice_max(order_by = dat) %>%
+  rename(val_inicial = val, dat_inicial = dat) %>%
+  full_join(historic, by = c("idp", "agr")) %>%
+  filter(!is.na(final)) %>%
+  filter(agr %in% c("PAS", "PAD", "cT", "cHDL", "cLDL", "TG", "IMC", "CAC", "FG") &
+           final<=dat & dat<=dat3mesos(final)) %>%
+  dplyr::select(idp, agr, val_inicial, dat_inicial, val, dat, inici, final, num_episodis_covid) %>%
+  group_by_at(vars(-val, -dat)) %>%
+  slice_min(order_by = dat) %>%
+  rename(val_final = val, dat_final = dat) %>%
+  group_by(idp, agr, num_episodis_covid) %>%  # per treure duplicats
+  slice_max(val_inicial) %>%
+  slice_max(val_final)
+
+gc()
+
+```
+
+```{r}
+# Afegint si ha estat a l'hospital i a la UCI o no en aquell episodi de covid
+aux <- historic %>%
+  filter(idp %in% evolucio_dm2$idp & 
+           procedencia=="hospital" & 
+           (agr=="COVID" | agr=="COVID19" | resultat=="Positiu")) %>%
+  dplyr::select(idp, dat) %>%
+  group_by(idp, dat)
+aux_1 <- historic %>%
+  filter(idp %in% evolucio_dm2$idp & 
+           uci=="S" & 
+           (agr=="COVID" | agr=="COVID19" | resultat=="Positiu")) %>%
+  dplyr::select(idp, dat) %>%
+  group_by(idp, dat)
+evolucio_dm2 <- evolucio_dm2 %>% 
+  left_join(aux, by = "idp") %>%
+  mutate(hospitalitzacio = if_else(inici<=dat & dat<=final & !is.na(dat), "si", "no")) %>%
+  group_by_at(vars(-dat, -hospitalitzacio)) %>%
+  summarize(hospitalitzacio = max(hospitalitzacio)) %>% 
+  left_join(aux_1, by = "idp") %>%
+  mutate(UCI = if_else(inici<=dat & dat<=final & !is.na(dat), "si", "no")) %>%
+  group_by_at(vars(-dat, -UCI)) %>%
+  summarize(UCI = max(UCI))
+
+gc()
+
+aux <- historic %>%
+  filter(idp %in% evolucio_ecrm$idp & 
+           procedencia=="hospital" & 
+           (agr=="COVID" | agr=="COVID19" | resultat=="Positiu")) %>%
+  dplyr::select(idp, dat) %>%
+  group_by(idp, dat)
+aux_1 <- historic %>%
+  filter(idp %in% evolucio_ecrm$idp & 
+           uci=="S" & 
+           (agr=="COVID" | agr=="COVID19" | resultat=="Positiu")) %>%
+  dplyr::select(idp, dat) %>%
+  group_by(idp, dat)
+evolucio_ecrm <- evolucio_ecrm %>% 
+  left_join(aux, by = "idp") %>%
+  mutate(hospitalitzacio = if_else(inici<=dat & dat<=final & !is.na(dat), "si", "no")) %>%
+  group_by_at(vars(-dat, -hospitalitzacio)) %>%
+  summarize(hospitalitzacio = max(hospitalitzacio)) %>% 
+  left_join(aux_1, by = "idp") %>%
+  mutate(UCI = if_else(inici<=dat & dat<=final & !is.na(dat), "si", "no")) %>%
+  group_by_at(vars(-dat, -UCI)) %>%
+  summarize(UCI = max(UCI))
+
+gc()
+
+aux <- historic %>%
+  filter(idp %in% evolucio_obesitat$idp & 
+           procedencia=="hospital" & 
+           (agr=="COVID" | agr=="COVID19" | resultat=="Positiu")) %>%
+  dplyr::select(idp, dat) %>%
+  group_by(idp, dat)
+aux_1 <- historic %>%
+  filter(idp %in% evolucio_obesitat$idp & 
+           uci=="S" & 
+           (agr=="COVID" | agr=="COVID19" | resultat=="Positiu")) %>%
+  dplyr::select(idp, dat) %>%
+  group_by(idp, dat)
+evolucio_obesitat <- evolucio_obesitat %>% 
+  left_join(aux, by = "idp") %>%
+  mutate(hospitalitzacio = if_else(inici<=dat & dat<=final & !is.na(dat), "si", "no")) %>%
+  group_by_at(vars(-dat, -hospitalitzacio)) %>%
+  summarize(hospitalitzacio = max(hospitalitzacio)) %>% 
+  left_join(aux_1, by = "idp") %>%
+  mutate(UCI = if_else(inici<=dat & dat<=final & !is.na(dat), "si", "no")) %>%
+  group_by_at(vars(-dat, -UCI)) %>%
+  summarize(UCI = max(UCI))
+
+gc()
+
+rm(aux, aux_1)
+```
+
+```{r}
+# Afegint el càlcul de les arees sota la curva (AUC)
+
+dies <- function(dat) {
+  round(dat/10000)*365 + round(dat/100)%%100*30 + dat%%100
+}
+
+# Per DM2
+evolucio_dm2$AUC <- 0
+contador <- 0
+for (rows in 1:nrow(evolucio_dm2)) {
+  aux <- historic %>%
+    filter(idp %in% evolucio_dm2[rows,]$idp &
+             (agr==evolucio_dm2[rows,]$agr | cod==evolucio_dm2[rows,]$agr) &
+             dat>=evolucio_dm2[rows,]$dat_inicial & 
+             dat<=evolucio_dm2[rows,]$dat_final) %>%
+    dplyr::select(dat, val) %>%
+    arrange(dat)
+  if (nrow(aux) > 1) {
+    evolucio_dm2[rows, "AUC"] <- sum(
+      ((aux[-1, "val"] + aux[-nrow(aux), "val"]) * 
+        (dies(aux[-1, "dat"]) - dies(aux[-nrow(aux), "dat"])) / 2))
+  }
+  contador <<- contador + 1
+  if(contador%%1000==0){print(contador)}
+}
+
+
+# Per ECRM
+evolucio_ecrm$AUC <- 0
+contador <- 0
+for (rows in 1:nrow(evolucio_ecrm)) {
+  aux <- historic %>%
+    filter(idp %in% evolucio_ecrm[rows,]$idp &
+             (agr==evolucio_ecrm[rows,]$agr | cod==evolucio_ecrm[rows,]$agr) &
+             dat>=evolucio_ecrm[rows,]$dat_inicial & 
+             dat<=evolucio_ecrm[rows,]$dat_final) %>%
+    dplyr::select(dat, val) %>%
+    arrange(dat)
+  if (nrow(aux) > 1) {
+    evolucio_ecrm[rows, "AUC"] <- sum(
+      ((aux[-1, "val"] + aux[-nrow(aux), "val"]) * 
+        (dies(aux[-1, "dat"]) - dies(aux[-nrow(aux), "dat"])) / 2))
+  }
+  contador <<- contador + 1
+  if(contador%%1000==0){print(contador)}
+}
+
+
+# Per Obesitat
+evolucio_obesitat$AUC <- 0
+contador <- 0
+for (rows in 1:nrow(evolucio_obesitat)) {
+  aux <- historic %>%
+    filter(idp %in% evolucio_obesitat[rows,]$idp &
+             (agr==evolucio_obesitat[rows,]$agr | cod==evolucio_obesitat[rows,]$agr) &
+             dat>=evolucio_obesitat[rows,]$dat_inicial & 
+             dat<=evolucio_obesitat[rows,]$dat_final) %>%
+    dplyr::select(dat, val) %>%
+    arrange(dat)
+  if (nrow(aux) > 1) {
+    evolucio_obesitat[rows, "AUC"] <- sum(
+      ((aux[-1, "val"] + aux[-nrow(aux), "val"]) * 
+        (dies(aux[-1, "dat"]) - dies(aux[-nrow(aux), "dat"])) / 2))
+  }
+  contador <<- contador + 1
+  if(contador%%1000==0){print(contador)}
+}
+
+rm(aux, rows, j, contador)
+
+```
+
+```{r}
+# Afegint les variables de percentatge en l'increment (increment_per) i de la pendent (slope)
+
+evolucio_dm2 <- evolucio_dm2 %>%
+  mutate(increment_perc = if_else(val_inicial==0,
+                                  val_final,
+                                  (val_final - val_inicial) / val_inicial),
+         slope = (val_final - val_inicial) / (dies(dat_final) - dies(dat_inicial))) %>%
+  mutate(slope = replace_na(slope, 0))
+
+evolucio_ecrm <- evolucio_ecrm %>%
+  mutate(increment_perc = if_else(val_inicial==0,
+                                  val_final,
+                                  (val_final - val_inicial) / val_inicial),
+         slope = (val_final - val_inicial) / (dies(dat_final) - dies(dat_inicial))) %>%
+  mutate(slope = replace_na(slope, 0))
+
+evolucio_obesitat <- evolucio_obesitat %>%
+  mutate(increment_perc = if_else(val_inicial==0,
+                                  val_final,
+                                  (val_final - val_inicial) / val_inicial),
+         slope = (val_final - val_inicial) / (dies(dat_final) - dies(dat_inicial))) %>%
+  mutate(slope = replace_na(slope, 0))
+```
+
+```{r}
+# Taula Plana final
+
+taula_final <- evolucio_dm2 %>%
+  bind_rows(evolucio_ecrm) %>%
+  bind_rows(evolucio_obesitat) %>%
+  distinct(idp, agr, num_episodis_covid, .keep_all = TRUE)        %>%
+  mutate(durada_contagi = dies(final) - dies(inici)) %>%
+  left_join(invariables[,c("idp", "sexe", "dnaix", "situacio")], by = "idp") %>%
+  mutate(edat = round(inici / 10000) - round(dnaix / 10000)) %>%
+  mutate(mort = if_else(situacio=="D", "si", "no")) %>%
+  left_join(historic[historic$dm2==1,c("idp", "dat")] %>% 
+              filter(idp %in% evolucio_dm2$idp) %>%
+              group_by(idp) %>% 
+              summarize(dat_primer_dm2 = min(dat)), by = "idp") %>%
+  mutate(temps_primer_diagnostic_dm2 = if_else(!is.na(dat_primer_dm2),
+                                               dies(inici) - dies(dat_primer_dm2),
+                                               0)) %>%
+  mutate(temps_primer_diagnostic_dm2 = if_else(temps_primer_diagnostic_dm2<=0,
+                                               0,
+                                               temps_primer_diagnostic_dm2))
+taula_final <- taula_final %>%
+  left_join(
+    taula_final[,c("idp", "num_episodis_covid", "agr", "inici", "final")] %>%
+      left_join(vacunacions[,c("idp", "dat", "dosi")], by = "idp") %>%
+      mutate(estat_vacunal = if_else(inici<=dat & dat<=final,
+                                     dosi,
+                                     NA)) %>%
+      group_by_at(vars(idp, num_episodis_covid, agr)) %>%
+      summarize(estat_vacunal = max(estat_vacunal, na.rm = TRUE)) %>%
+      mutate(estat_vacunal = if_else(!is.finite(estat_vacunal), 0, estat_vacunal)),
+    by = c("idp", "num_episodis_covid", "agr")
+  )
+
+taula_final <- taula_final[,c("idp", "num_episodis_covid", "inici", "final", "durada_contagi",
+                              "agr", "val_inicial", "val_final", "increment_perc", "slope", "AUC",
+                              "edat", "sexe", "temps_primer_diagnostic_dm2","hospitalitzacio", "UCI",
+                              "mort")]
+
+taula_final <- taula_final %>%
+  pivot_wider(names_from = agr, values_from = c("val_inicial", "val_final", "increment_perc",
+                                                "slope", "AUC")) %>%
+  left_join(historic %>% 
+              dplyr::select(idp, dat, dm2, ecrm, obesitat), 
+            by = "idp") %>%
+  filter(inici<=dat & dat<=final) %>%
+  dplyr::select(-dat) %>%
+  group_by_at(vars(-dm2, -ecrm, -obesitat)) %>%
+  summarize(dm2 = max(dm2),
+            ecrm = max(ecrm),
+            obesitat = max(obesitat)) %>%
+  mutate(DM2 = if_else(dm2==1, "si", "no"),
+         ECRM = if_else(ecrm==1, "si", "no"),
+         OBESITAT = if_else(obesitat==1, "si", "no")) %>%
+  dplyr::select(-dm2, -ecrm, -obesitat)
+
+taula_final$final <- NULL
+
+# Taula que ens dona el percentatge de NA's per cada idp pel nombre total de valors generats de percentatge d'increment/decrement, slope i AUC en realitzar la taula plana
+
+percentatges_idp_NA <- taula_final %>%
+  group_by(idp) %>%
+  summarise_all(~sum(is.na(.))) %>%
+  mutate(Total_NA = rowSums(dplyr::select(., -idp), na.rm = TRUE)) %>%
+  dplyr::select(idp, Total_NA) %>%
+  left_join(
+    taula_final %>%
+      group_by(idp) %>%
+      summarise(Total_Data = n_distinct(row_number()) * 50),
+    by = "idp"
+  ) %>%
+  mutate(percentage_NA = Total_NA / Total_Data) %>%
+  dplyr::select(idp, percentage_NA)
+
+hist(percentatges_idp_NA$percentage_NA, main = "Histogram of the percentages of NA's")
+```
+
+```{r}
+# Decidim treure els idp's amb percentatge de NA's superiors a una cota i seleccionem aquests individus per fer-ne l'anàlisis
+
+na_max_percentage <- 0.6
+
+percentatges_idp_NA <- percentatges_idp_NA[percentatges_idp_NA$percentage_NA < na_max_percentage,]
+
+# deixem únicament els individus seleccionats
+
+taula_final <- taula_final %>%
+  filter(idp %in% percentatges_idp_NA$idp)
+
+# excloem ara les variables amb més quantitat de NA's (mateix punt de tall que mab les files)
+
+percentage_col_NA <- colSums(is.na(taula_final)) / nrow(taula_final)
+
+taula_final <- taula_final[,names(percentage_col_NA[percentage_col_NA < na_max_percentage])]
+
+# fem la imputació
+
+imputacions <- mice(taula_final[,-which(names(taula_final) %in% c("idp", "inici"))], m = 5, seed = 123)
+
+taula_final <- data.frame(taula_final$idp, taula_final$inici, complete(imputacions)) %>%
+  rename(idp = taula_final.idp) %>% 
+  rename(inici_contagi = taula_final.inici)
+
+rm(imputacions, percentatges_idp_NA, na_max_percentage, percentage_col_NA, taula_percentatges_NA)
+rm(episodis_covid_dm2, episodis_covid_ecrm, episodis_covid_obesitat)
+```
+
+
+# Data analysis and visualization
+
+Correlation plot
+
+```{r}
+taula_valors_analitzar <- as.data.frame(scale(taula_final %>%
+  dplyr::select(grep("final", names(taula_final), value = TRUE),
+         grep("increment_perc", names(taula_final), value = TRUE),
+         grep("slope", names(taula_final), value = TRUE),
+         grep("AUC", names(taula_final), value = TRUE))))
+
+dist_matrix <- dist(x=taula_valors_analitzar, method = "euclidean")
+
+cor_matrix <- cor(taula_valors_analitzar)
+corrplot(cor_matrix, main = "correlation matrix plot")
+```
+
+```{r}
+heatmap(cor_matrix, main = "Heatmap of the correlation matrix")
+```
+
+Most correlated variables
+
+```{r}
+high_cor_pairs <- which(upper.tri(cor_matrix, diag = FALSE) & abs(cor_matrix) > 0.8, arr.ind = TRUE)
+data.frame(
+  Variable1 = colnames(cor_matrix)[high_cor_pairs[, 1]],
+  Variable2 = colnames(cor_matrix)[high_cor_pairs[, 2]],
+  Correlation = cor_matrix[high_cor_pairs]
+)
+rm(high_cor_pairs)
+```
+
+
+```{r}
+# PCA
+
+pca <- prcomp(taula_valors_analitzar, scale. = TRUE)
+
+cat("Variables most correlated with PC1:", "\n")
+pca$rotation[abs(pca$rotation[,"PC1"])>0.3 , "PC1"]
+cat("\n\n","Variables most correlated with PC2:", "\n")
+pca$rotation[abs(pca$rotation[,"PC2"])>0.3 , "PC2"]
+
+fviz_pca_biplot(pca, col.var = "red", labelsize = 3, title = "PCA biplot")
+```
+
+Histograms of the variables most correlated with the first 2 principal components of the PCA.
+
+```{r}
+pc1 <- names(pca$rotation[abs(pca$rotation[,"PC1"])>0.3 , "PC1"])
+pc2 <- names(pca$rotation[abs(pca$rotation[,"PC2"])>0.3 , "PC2"])
+
+df_pc1 <- tidyr::gather(taula_final[,pc1], key = "variable", value = "value")
+df_pc2 <- tidyr::gather(taula_final[,pc2], key = "variable", value = "value")
+
+ggplot(df_pc1, aes(x = value, fill = variable)) +
+  geom_histogram(position = "identity") +
+  facet_wrap(~variable, scales = "free") +
+  labs(title = "Histograma of most correlated variables with PC1", x = "Valor", y = "Frecuencia")
+
+ggplot(df_pc2, aes(x = value, fill = variable)) +
+  geom_histogram(position = "identity") +
+  facet_wrap(~variable, scales = "free") +
+  labs(title = "Histograma of most correlated variables with PC2", x = "Valor", y = "Frecuencia")
+
+rm(pc1, pc2, df_pc1, df_pc2)
+```
+
+```{r, warning = FALSE}
+#### Hopkins test
+
+set.seed(set_seed)
+hopkins(taula_valors_analitzar)
+
+# a value close to 1 tends to indicate the data is highly clustered
+# so now we know that our data is highly clustered
+```
+
+```{r}
+summary(clValid(taula_valors_analitzar, 3:8, clMethods=c("kmeans","pam"), validation="internal"))
+summary(clValid(taula_valors_analitzar, 3:8, clMethods=c("kmeans","pam"), validation="stability"))
+
+summary(clValid(taula_valors_analitzar, 3:8, clMethods=c("kmeans"), validation="internal"))
+summary(clValid(taula_valors_analitzar, 3:8, clMethods=c("kmeans"), validation="stability"))
+summary(clValid(taula_valors_analitzar, 3:8, clMethods=c("pam"), validation="internal"))
+summary(clValid(taula_valors_analitzar, 3:8, clMethods=c("pam"), validation="stability"))
+```
+
+```{r}
+# TESS k-means method
+
+TESS <- fviz_nbclust(taula_valors_analitzar, FUNcluster= kmeans, diss=NULL, k.max=15, method = "wss")
+# gradient TESS:
+gt<-data.frame()
+gt[1,1]<-(TESS$data[1,2]-TESS$data[2,2])*100/TESS$data[1,2]
+gt[2,1]<-(TESS$data[2,2]-TESS$data[3,2])*100/TESS$data[2,2]
+gt[3,1]<-(TESS$data[3,2]-TESS$data[4,2])*100/TESS$data[3,2]
+gt[4,1]<-(TESS$data[4,2]-TESS$data[5,2])*100/TESS$data[4,2]
+gt[5,1]<-(TESS$data[5,2]-TESS$data[6,2])*100/TESS$data[5,2]
+gt[6,1]<-(TESS$data[6,2]-TESS$data[7,2])*100/TESS$data[6,2]
+gt[7,1]<-(TESS$data[7,2]-TESS$data[8,2])*100/TESS$data[7,2]
+gt[8,1]<-(TESS$data[8,2]-TESS$data[9,2])*100/TESS$data[8,2]
+gt[9,1]<-(TESS$data[9,2]-TESS$data[10,2])*100/TESS$data[9,2]
+
+plot(2:10,gt[,1],type="b",xlab="clusters", ylab="GradSSG",main="SSG with k-means")
+
+
+# TESS PAM method
+TESS3 <-  fviz_nbclust(as.matrix(taula_valors_analitzar), FUNcluster = function(x, k) pam(x, k = k), diss=NULL, k.max=15, method = "wss")
+# gradient TESS
+gt<-data.frame()
+gt[1,1]<-(TESS3$data[1,2]-TESS3$data[2,2])*100/TESS3$data[1,2]
+gt[2,1]<-(TESS3$data[2,2]-TESS3$data[3,2])*100/TESS3$data[2,2]
+gt[3,1]<-(TESS3$data[3,2]-TESS3$data[4,2])*100/TESS3$data[3,2]
+gt[4,1]<-(TESS3$data[4,2]-TESS3$data[5,2])*100/TESS3$data[4,2]
+gt[5,1]<-(TESS3$data[5,2]-TESS3$data[6,2])*100/TESS3$data[5,2]
+gt[6,1]<-(TESS3$data[6,2]-TESS3$data[7,2])*100/TESS3$data[6,2]
+gt[7,1]<-(TESS3$data[7,2]-TESS3$data[8,2])*100/TESS3$data[7,2]
+gt[8,1]<-(TESS3$data[8,2]-TESS3$data[9,2])*100/TESS3$data[8,2]
+gt[9,1]<-(TESS3$data[9,2]-TESS3$data[10,2])*100/TESS3$data[9,2]
+
+plot(2:10,gt[,1],type="b",xlab="clusters", ylab="GradSSG",main="SSG with PAM")
+
+
+rm(TESS, TESS3, gt)
+```
+
+
+```{r}
+# k-means
+set.seed(set_seed)
+
+k <- 3
+pam <- pam(dist_matrix, k)
+table(pam$cluster)
+
+rm(k)
+```
+Mediods
+```{r}
+taula_final[pam$medoids,]
+```
+
+Boxplots of the numerical variables classified by groups.
+
+```{r}
+##### Numerical variables #####
+
+taula_presentacio_numeriques <- taula_final[,c(grep("final", names(taula_final), value = TRUE),
+                                               grep("increment_perc", names(taula_final), 
+                                                    value = TRUE),
+                                               grep("slope", names(taula_final), value = TRUE),
+                                               grep("AUC", names(taula_final), value = TRUE))] %>%
+  mutate(clusters = as.factor(pam$cluster))
+
+# boxplots
+for (name in names(taula_presentacio_numeriques)
+     [-which(names(taula_presentacio_numeriques)=="clusters")]) {
+  print(boxplot(taula_presentacio_numeriques[,name] ~ taula_presentacio_numeriques[,"clusters"],
+        main = "Boxplot",
+        xlab = "clusters",
+        ylab = name))
+}
+
+# PCA's
+for (cluster in c("1", "2", "3")) {
+  pca_result <- prcomp(taula_presentacio_numeriques
+                       [taula_presentacio_numeriques$clusters == cluster,
+                         -which(names(taula_presentacio_numeriques) == "clusters")], scale. = TRUE)
+  print(fviz_contrib(pca_result, choice = "var", axes = 1:2, top = 15))
+}
+
+# Radar
+taula_presentacio_numeriques <- taula_presentacio_numeriques %>%
+  mutate_at(vars(names(taula_presentacio_numeriques)[-which(names(taula_presentacio_numeriques)=="clusters")]), ~ (.-min(.))/(max(.)-min(.)))%>%
+  group_by(clusters)  %>%
+  summarise_at(vars(names(taula_presentacio_numeriques)[-which(names(taula_presentacio_numeriques)=="clusters")]),median, na.rm = TRUE) %>%
+  pivot_longer(cols = names(taula_presentacio_numeriques)[-which(names(taula_presentacio_numeriques)=="clusters")])
+
+ggplot(taula_presentacio_numeriques, 
+       aes(x = name, y = value, group = clusters, color = clusters, fill = clusters)) +
+  geom_line() +
+  geom_point() +
+  coord_polar() +
+  labs(title = "Gráfico de Radar",
+       x = "Variable",
+       y = "Valor") +
+  theme_minimal()
+
+rm(taula_presentacio_numeriques, pca_result)
+```
+
+
+Plot of the PCA with the individuals colored by the clusters they belong
+
+```{r}
+fviz_pca_biplot(pca, col.var = "red", labelsize = 3, 
+                title = "PCA biplot by k-mean clusters", pointsize = 0, 
+                geom = "point", invisible = "ind.names") +
+  geom_point(aes(color = as.factor(pam$clustering)), size = 2, alpha = 0.4)
+```
+
+Building the table with the initial parameters
+
+```{r}
+taula_inicial <- taula_final %>%
+  mutate(clusters = as.factor(pam$clustering)) %>%
+  dplyr::select(idp, clusters, num_episodis_covid, edat, sexe, temps_primer_diagnostic_dm2, 
+         grep("inicial", names(taula_final), value = TRUE), DM2, ECRM, OBESITAT) %>%
+  left_join(
+    taula_final[,c("idp", "num_episodis_covid", "inici_contagi")] %>%
+      left_join(vacunacions[,c("idp", "dat", "dosi")], by = "idp") %>%
+      filter(dat <= inici_contagi) %>%
+      group_by(idp, num_episodis_covid, inici_contagi) %>%
+      slice_max(order_by = dat) %>%
+      group_by(idp, num_episodis_covid) %>%
+      summarize(dosi = max(dosi)),
+    by = c("idp", "num_episodis_covid")
+  ) %>%
+  mutate(dosi = replace(dosi, is.na(dosi), 0)) %>%
+  mutate(edat_diagnosi_diabetis = round(temps_primer_diagnostic_dm2/365))
+
+for(names in names(sapply(taula_inicial, class)[sapply(taula_inicial, class)=="character"])) {
+  taula_inicial[,names] <- as.factor(taula_inicial[,names])
+}
+```
+
+Descriptive analiZis of the input variables
+
+```{r}
+
+# boxplots
+for (name in names(taula_inicial)
+     [sapply(taula_inicial, class) %in% c("numeric", "integer")]) {
+  print(boxplot(taula_inicial[,name] ~ taula_inicial[,"clusters"],
+        main = "Boxplot",
+        xlab = "clusters",
+        ylab = name))
+}
+
+taula_presentacio_numeriques <- taula_inicial[,sapply(taula_inicial, class) %in% c("numeric", "integer")] %>%
+  mutate(clusters = as.numeric(taula_inicial$clusters))
+
+taula_presentacio_numeriques <- taula_presentacio_numeriques[,-which(names(taula_presentacio_numeriques) %in% 
+                                                                       c("dosi",
+                                                                         "num_episodis_covid"))]
+
+taula_presentacio_numeriques <- taula_presentacio_numeriques %>%
+  mutate_at(vars(names(taula_presentacio_numeriques)[-which(names(taula_presentacio_numeriques)=="clusters")]), ~ (.-min(.))/(max(.)-min(.)))%>%
+  group_by(clusters)  %>%
+  summarise_at(vars(names(taula_presentacio_numeriques)[-which(names(taula_presentacio_numeriques)=="clusters")]),median, na.rm = TRUE) %>%
+  pivot_longer(cols = names(taula_presentacio_numeriques)[-which(names(taula_presentacio_numeriques)=="clusters")])
+
+ggplot(taula_presentacio_numeriques, 
+       aes(x = name, y = value, group = clusters, color = clusters, fill = clusters)) +
+  geom_line() +
+  geom_point() +
+  coord_polar() +
+  labs(title = "Gráfico de Radar",
+       x = "Variable",
+       y = "Valor") +
+  theme_minimal()
+
+
+##### Categorical variables #####
+
+# Barplots and Mosaic
+for (name in c(names(taula_inicial)[!sapply(taula_inicial, class) %in% c("numeric", "integer")],
+               "dosi",
+               "num_episodis_covid")) {
+  if(name!="clusters" & name!="idp"){
+    par(mfrow=c(1,2))
+    barplot(prop.table(table(taula_inicial[, name],
+                             taula_inicial[, "clusters"]), margin = 2), 
+            beside=TRUE, legend.text = TRUE, xlab = "cluster", ylab = name)
+    
+    mosaicplot(table(taula_inicial[, "clusters"], 
+                   taula_inicial[, name]),
+               xlab = "cluster", ylab = name)
+  }
+}
+
+rm(taula_presentacio_numeriques)
+
+```
+
+
+Classification models
+
+```{r}
+set.seed(set_seed)
+
+train_idx <- createDataPartition(taula_inicial$clusters, p = .8, list = F)
+
+# Creating the training and testing sets
+train <- taula_inicial[train_idx,-which(names(taula_inicial)=="idp")]
+test <- taula_inicial[-train_idx,-which(names(taula_inicial)=="idp")]
+```
+
+- Multinomial Logistic Regression
+
+```{r}
+set.seed(set_seed)
+
+taula_inicial$clusters <- relevel(as.factor(taula_inicial$clusters), ref = 2)
+
+mod_multinom <- multinom(clusters ~ .,
+                         data = taula_inicial[,-which(names(taula_inicial)=="idp")])
+preds <- predict(mod_multinom, newdata = taula_inicial[,-which(names(taula_inicial)=="idp")])
+(t <- table(preds, taula_inicial$clusters))
+cat("Accuracy for training set in Multinomial Logistic Regression: ", sum(diag(t))/sum(t), "\n\n")
+
+taula_inicial$clusters <- as.integer(taula_inicial$clusters)
+```
+
+```{r}
+aux <- lrtest(mod_multinom)
+cat("Is the multinomial logistic regression model significant? P-value = ", aux$`Pr(>Chisq)`[2], "\n\n")
+
+p_values_multinom <- data.frame()
+for (var_name in names(taula_inicial)[-which(names(taula_inicial) %in% c("idp", "clusters"))]) {
+  aux <- anova(multinom(as.formula(paste0("clusters ~ . -",var_name)),
+               data =  taula_inicial[,-which(names(taula_inicial)=="idp")]),
+               mod_multinom, 
+               test = "Chisq")
+  p_values_multinom <- p_values_multinom %>% 
+    bind_rows(
+      data.frame("Variables"=var_name,
+                 "p_values"=aux$`Pr(Chi)`[2])
+      )
+}
+colnames(p_values_multinom) <- c("Variables","p_values")
+rm(aux)
+
+p_values_multinom
+```
+
+```{r}
+set.seed(set_seed)
+
+# Trianing with train set and predicting the test set
+
+train$clusters <- relevel(as.factor(train$clusters), ref = 2)
+
+# Definir el esquema de validación cruzada
+control <- trainControl(method = "cv", number = 5)
+
+# Entrenar el modelo multinomial con validación cruzada
+mod_multinom <- train(clusters ~ .,
+                      data = train,
+                      method = "multinom",
+                      trControl = control)
+
+train$clusters <- as.factor(train$clusters)
+test$clusters <- as.factor(test$clusters)
+
+predicciones <- predict(mod_multinom, test)
+
+confusionMatrix(predicciones, test$clusters) 
+```
+
+
+- Naive Bayes
+
+```{r}
+set.seed(set_seed)
+
+naive_bayes <- naiveBayes(clusters ~ ., taula_inicial[,-which(names(taula_inicial)=="idp")])
+
+preds <- predict(naive_bayes, newdata = taula_inicial[,-which(names(taula_inicial)=="idp")])
+(t <- table(preds, taula_inicial$clusters))
+cat("Accuracy for training set in Naive Bayes: ", sum(diag(t))/sum(t))
+```
+
+```{r}
+# Trianing with train set and predicting the test set
+set.seed(set_seed)
+
+# Definir el esquema de validación cruzada
+control <- trainControl(method = "cv", number = 5)
+
+# Entrenar el modelo multinomial con validación cruzada
+naive_bayes <- train(clusters ~ .,
+                      data = train,
+                      method = "naive_bayes",
+                      trControl = control)
+
+train$clusters <- as.factor(train$clusters)
+
+predicciones <- predict(naive_bayes, test)
+
+confusionMatrix(predicciones, test$clusters) 
+```
+
+
+- Decision Trees/Random Forest
+
+```{r}
+set.seed(set_seed)
+
+mod_tree <- tree(clusters ~ .,
+                 taula_inicial[,-which(names(taula_inicial)=="idp")])
+
+preds <- predict(mod_tree,
+                 taula_inicial[,-which(names(taula_inicial)=="idp")])
+t <- table(preds, taula_inicial$clusters)
+rownames(t) <- as.character(round(as.numeric(rownames(t))))
+(t <- rowsum(t, row.names(t)))
+cat("Accuracy for training set in Decision Tree: ", sum(diag(t))/sum(t), "\n")
+
+mod_rf <- randomForest(clusters ~ .,
+                       taula_inicial[,-which(names(taula_inicial)=="idp")],
+                       importance=TRUE,
+                       ntree=50,
+                       do.trace=TRUE)
+preds <- predict(mod_rf, taula_inicial[,-which(names(taula_inicial)=="idp")])
+t <- table(preds, taula_inicial$clusters)
+rownames(t) <- as.character(
+  if_else(round(as.numeric(rownames(t)))<1, 
+          1, 
+          if_else(round(as.numeric(rownames(t)))>3,
+                  3,
+                  round(as.numeric(rownames(t)))))
+  )
+(t <- rowsum(t, row.names(t)))
+cat("Accuracy for training set in Random Forest: ", sum(diag(t))/sum(t))
+```
+
+```{r}
+plot(mod_rf, type="l")
+```
+
+
+```{r}
+varImpPlot(mod_rf)
+```
+
+
+```{r}
+set.seed(set_seed)
+
+# Trianing with train set and predicting the test set
+
+# Definir el esquema de validación cruzada
+control <- trainControl(method = "cv", number = 5)
+
+# Entrenar el modelo multinomial con validación cruzada
+mod_rf <- train(clusters ~ .,
+                data = train,
+                method = "rf",
+                trControl = control,
+                ntree = 50)
+
+train$clusters <- as.factor(train$clusters)
+
+predicciones <- predict(mod_rf, test)
+
+confusionMatrix(predicciones, test$clusters) 
+```
+
+
+
+
+- Support Vector Machine
+
+```{r}
+set.seed(set_seed)
+
+mod.svm <- svm(clusters ~ .,
+               data = taula_inicial[,-which(names(taula_inicial)=="idp")],
+               ranges=list(cost=c(0.01,0.2,0.1,1,5,10,100)),
+               ranges=list(kernel=c('linear','polynomial','radial','sigmoid'))
+               )
+summary(mod.svm)
+
+preds <- predict(mod.svm, taula_inicial[,-which(names(taula_inicial)=="idp")])
+t <- table(preds, taula_inicial$clusters)
+rownames(t) <- as.character(
+  if_else(round(as.numeric(rownames(t)))<1, 
+          1, 
+          if_else(round(as.numeric(rownames(t)))>3,
+                  3,
+                  round(as.numeric(rownames(t)))))
+  )
+(t <- rowsum(t, row.names(t)))
+cat("Accuracy for training set in SVM: ", sum(diag(t))/sum(t))
+```
+
+```{r}
+set.seed(set_seed)
+
+# Trianing with train set and predicting the test set
+
+# Definir el esquema de validación cruzada
+control <- trainControl(method = "cv", number = 5)
+
+# Entrenar el modelo multinomial con validación cruzada
+mod.svm <- train(clusters ~ .,
+                 data = train,
+                 method = "svmRadial",
+                 trControl = control)
+
+predicciones <- predict(mod.svm, test)
+
+confusionMatrix(predicciones, test$clusters)
+```
+
+
+
+
+
+```{r}
+random_classifier <- function(data) {
+  clases_posibles <- as.numeric(names(table(data$clusters)))
+  prediccion <- sample(clases_posibles, nrow(data), replace = TRUE)
+  return(prediccion)
+}
+
+optimal_clusters <- data.frame()
+
+for (n_clusters in c(2,3,4,5,6,7,8,9,10,11,12)) {
+  set.seed(set_seed)
+  for (set_random in round(abs(rnorm(30)*1000))) {
+    
+    set.seed(set_random)
+    
+    pam_aux <- pam(dist_matrix, n_clusters)
+    taula_inicial_aux <- taula_inicial %>%
+      mutate(clusters = pam_aux$clustering)
+    
+    
+    train_idx_aux <- createDataPartition(taula_inicial_aux$clusters, p = .8, list = F)
+    train_aux <- taula_inicial[train_idx_aux,-which(names(taula_inicial_aux)=="idp")]
+    test_aux <- taula_inicial[-train_idx_aux,-which(names(taula_inicial_aux)=="idp")]
+    
+    
+    ## multinomial logaritimic regression
+    train_aux$clusters <- relevel(as.factor(train_aux$clusters), ref = 2)
+
+    mod_multinom <- multinom(clusters ~ .,
+                             data = train_aux)
+    preds <- predict(mod_multinom, 
+                     newdata = test_aux)
+    t <- table(preds, test_aux$clusters)
+    optimal_clusters <- as.data.frame(list("n_clusters" = n_clusters, 
+                              "accuracy" = sum(diag(t))/sum(t),
+                              "model" = "Multinomial Logaritmic Regression")) %>%
+      bind_rows(optimal_clusters)
+    
+    train_aux$clusters <- as.integer(train_aux$clusters)
+    
+    ## navie bayes
+    naive_bayes <- naiveBayes(clusters ~ .,
+                              train_aux)
+
+    preds <- predict(naive_bayes, 
+                     newdata = test_aux)
+    t <- table(preds, test_aux$clusters)
+    optimal_clusters <- as.data.frame(list("n_clusters" = n_clusters, 
+                              "accuracy" = sum(diag(t))/sum(t),
+                              "model" = "Navie Bayes")) %>%
+      bind_rows(optimal_clusters)
+    
+    ## random forest
+    mod_rf <- randomForest(clusters ~ .,
+                       train_aux,
+                       importance=TRUE,
+                       ntree=40,
+                       do.trace=TRUE)
+    preds <- predict(mod_rf, test_aux)
+    t <- table(preds, test_aux$clusters)
+    rownames(t) <- as.character(
+      if_else(round(as.numeric(rownames(t)))<1, 
+              1, 
+              if_else(round(as.numeric(rownames(t)))>3,
+                      3,
+                      round(as.numeric(rownames(t)))))
+      )
+    t <- rowsum(t, row.names(t))
+    optimal_clusters <- as.data.frame(list("n_clusters" = n_clusters, 
+                              "accuracy" = sum(diag(t))/sum(t),
+                              "model" = "Random Forest")) %>%
+      bind_rows(optimal_clusters)
+    
+    ## SVM
+    mod.svm <- svm(clusters ~ .,
+               data = train_aux,
+               ranges=list(cost=c(0.01,0.2,0.1,1,5,10,100)),
+               ranges=list(kernel=c('linear','polynomial','radial','sigmoid'))
+               )
+    
+    preds <- predict(mod.svm, test_aux)
+    t <- table(preds, test_aux$clusters)
+    rownames(t) <- as.character(
+      if_else(round(as.numeric(rownames(t)))<1, 
+              1, 
+              if_else(round(as.numeric(rownames(t)))>3,
+                      3,
+                      round(as.numeric(rownames(t)))))
+      )
+    t <- rowsum(t, row.names(t))
+    optimal_clusters <- as.data.frame(list("n_clusters" = n_clusters, 
+                              "accuracy" = sum(diag(t))/sum(t),
+                              "model" = "SVM")) %>%
+      bind_rows(optimal_clusters)
+    
+    ## Random Classifier
+    
+    t <- table(random_classifier(test_aux),
+               test_aux$clusters)
+    optimal_clusters <- as.data.frame(list("n_clusters" = n_clusters, 
+                              "accuracy" = sum(diag(t))/sum(t),
+                              "model" = "Random Classifier")) %>%
+      bind_rows(optimal_clusters)
+  }
+  set.seed(set_seed)
+}
+
+
+ggplot(optimal_clusters, aes(x = n_clusters, y = accuracy, color = model)) +
+  geom_point() +
+  geom_smooth() +
+  labs(title = "N clusters vs Accuracy of the classification models",
+       x = "N clusters",
+       y = "Accuracy") +
+  theme_minimal()
+
+rm(taula_inicial_aux, pam_aux, train_idx_aux, train_aux, test_aux)
+```
+
+
+
+
+
+
+
+
+
+
+
+
