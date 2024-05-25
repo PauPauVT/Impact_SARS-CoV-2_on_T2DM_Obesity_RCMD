@@ -39,10 +39,9 @@ Project organization
 
     ├── README.md                                                 <- The first level README for the project developers.
     ├── State of the art
-    │   ├── dois.ods                                              <- 
-    │   ├── dois_title_abstract.rds                               <- 
-    │   └── State_of_the_art.Rmd                                  <- 
+    │   ├── dois.ods                                              <- List of the dois of the articles
+    │   └── State_of_the_art.Rmd                                  <- Analysis of the titles and abstracts of the articles
     │ 
     └── Data Preprocessing and data analysis           
-        └── Data_Preprocessing_and_data_analysis.Rmd              <- 
+        └── Data_Preprocessing_and_data_analysis.Rmd              <- Preprocessing data and analysis of it with ML
 
